@@ -44,18 +44,18 @@ def set_component_resources(code_info):
                 }
             }
         return metadata
-                
+
 def get_builder(codes, structure, parameters, **kwargs):
     """Get a builder for the PwBandsWorkChain."""
-    
+
     pw_code = codes.get("pw")["code"]
     pw2wannier90_code = codes.get("pw2wannier90")["code"]
     wannier90_code = codes.get("wannier90")["code"]
     kcw_code = codes.get("kcw")["code"]
     check_codes(pw_code, pw2wannier90_code, wannier90_code, kcw_code)
-    
+
     input_dictionary = parameters["koopmans"].pop("input_dictionary",{})
-    
+
     input_dictionary["workflow"]["mode"]= {
             "pw_code": pw_code.full_label,
             "kcw_code": kcw_code.full_label,
@@ -66,10 +66,10 @@ def get_builder(codes, structure, parameters, **kwargs):
             "metadata_w90":set_component_resources(codes.get("wannier90")),
             "metadata_kcw":set_component_resources(codes.get("kcw")),
           }
-    
+
     kcw_wf = KoopmansWorkChain.get_builder()
     kcw_wf.input_dictionary = orm.Dict(input_dictionary)
-    
+
     return kcw_wf
 
 

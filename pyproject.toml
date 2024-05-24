@@ -25,8 +25,8 @@ dependencies = [
     "aiida-core>=2.5,<3",
     "voluptuous",
     "aiida-quantumespresso~=4.6.0",
-    "aiida-wannier90-workflows @ git+https://github.com/aiidateam/aiida-wannier90-workflows",
-    "koopmans @ git+https://github.com/mikibonacci/koopmans@feature/ase-to-pw"
+    # "aiida-wannier90-workflows @ git+https://github.com/aiidateam/aiida-wannier90-workflows",
+    # "koopmans @ git+https://github.com/mikibonacci/koopmans@new_temporary"
 ]
 
 [project.urls]

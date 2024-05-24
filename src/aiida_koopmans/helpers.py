@@ -8,22 +8,28 @@ Note: Point 2 is made possible by the fact that the ``diff`` executable is
 available in the PATH on almost any UNIX system.
 """
 
-import shutil
+import copy
+import functools
 import pathlib
+import shutil
+import subprocess
 import tempfile
+from pathlib import Path
 
 import numpy as np
-import functools
-
 from aiida.common.exceptions import NotExistent
-from aiida.orm import Code, Computer
+from aiida.orm import CalculationNode, Code, Computer, WorkflowNode
+from aiida.tools.dumping.processes import ProcessDumper
 from aiida_quantumespresso.calculations.pw import PwCalculation
 from aiida_wannier90.calculations.wannier90 import Wannier90Calculation
 from ase import io
 from ase.io.espresso import kch_keys, kcp_keys, kcs_keys, pw_keys, w2kcw_keys
 
 from aiida_koopmans.calculations.kcw import KcwCalculation
-from aiida_koopmans.data.utils import generate_singlefiledata, generate_alpha_singlefiledata
+from aiida_koopmans.data.utils import (
+    generate_alpha_singlefiledata,
+    generate_singlefiledata,
+)
 
 """
 ASE calculator MUST have `wchain` attribute (the related AiiDA WorkChain) to be able to use these functions!
@@ -120,7 +126,7 @@ def get_code(entry_point, computer):
 # read the output file, mimicking the read_results method of ase-koopmans: https://github.com/elinscott/ase_koopmans/blob/master/ase/calculators/espresso/_espresso.py
 def read_output_file(calculator, inner_remote_folder=None):
     """
-    Read the output file of a calculator using ASE io.read() method but parsing the AiiDA outputs. 
+    Read the output file of a calculator using ASE io.read() method but parsing the AiiDA outputs.
     NB: calculator (ASE) should contain the related AiiDA workchain as attribute.
     """
     if inner_remote_folder:
@@ -154,7 +160,7 @@ def get_output_content(calculator, filename, mode="r", inner_remote_folder=None)
     for line in range(len(content)):
         content[line] += "\n"
     return content[:-1] # this is the analogous of the file.readlines()
-    
+
 # Pw calculator.
 def get_builder_from_ase(pw_calculator):
     from aiida import load_profile, orm
@@ -335,8 +341,8 @@ def from_kcwham_to_KcwCalculation(kcw_calculator):
     for k in list(ham_dict):
         if ham_dict[k] is None:
             ham_dict.pop(k)
-    
-    # for now always true as we skip the smooth interpolation procedure.    
+
+    # for now always true as we skip the smooth interpolation procedure.
     if not any(kcw_calculator.atoms.pbc):
         ham_dict["do_bands"] = False
     else:
@@ -365,17 +371,18 @@ def from_kcwham_to_KcwCalculation(kcw_calculator):
         builder.wann_emp_centres_xyz = kcw_calculator.w90_files["emp"][
             "centres_xyz"
         ]
-        
+
     if hasattr(kcw_calculator, "kpoints"):
-        # I provide kpoints as an array (output in the wannierized band structure), so I need to convert them. 
+        # I provide kpoints as an array (output in the wannierized band structure), so I need to convert them.
         kpoints = orm.KpointsData()
         kpoints.set_kpoints(kcw_calculator.kpoints)
         builder.kpoints = kpoints
-        
-    if hasattr(kcw_calculator, "alphas_files"):
-        builder.alpha_occ = kcw_calculator.alphas_files["alpha"]
-        builder.alpha_emp = kcw_calculator.alphas_files["alpha_empty"]
-    
+
+    # JG: Temporary fix
+    # if hasattr(kcw_calculator, "alphas_files"):
+    #     builder.alpha_occ = kcw_calculator.alphas_files["alpha"]
+    #     builder.alpha_emp = kcw_calculator.alphas_files["alpha_empty"]
+
     return builder
 
 def from_kcwscreen_to_KcwCalculation(kcw_calculator):
@@ -449,7 +456,7 @@ def from_kcwscreen_to_KcwCalculation(kcw_calculator):
         builder.wann_emp_centres_xyz = kcw_calculator.w90_files["emp"][
             "centres_xyz"
         ]
-    
+
     return builder
 
 def get_wannier90bandsworkchain_builder_from_ase(w90_calculator):
@@ -486,7 +493,7 @@ def get_wannier90bandsworkchain_builder_from_ase(w90_calculator):
     builder = Wannier90BandsWorkChain.get_builder_from_protocol(
             codes=codes,
             structure=nscf.inputs.pw.structure,
-            pseudo_family="PseudoDojo/0.4/PBE/FR/standard/upf",
+            pseudo_family="PseudoDojo/0.4/PBE/SR/standard/upf",
             protocol="fast",
             projection_type=WannierProjectionType.ANALYTIC,
             print_summary=False,
@@ -509,7 +516,7 @@ def get_wannier90bandsworkchain_builder_from_ase(w90_calculator):
         t = np.where(k_linear==coords)[0]
         k_labels.append([t[0],label])
         k_coords.append(special_k[label].tolist())
-    
+
     kpoints_path = orm.KpointsData()
     kpoints_path.set_kpoints(k_path,labels=k_labels,cartesian=False)
     builder.kpoint_path  =  kpoints_path
@@ -530,10 +537,13 @@ def get_wannier90bandsworkchain_builder_from_ase(w90_calculator):
     converted_projs = []
     for proj in w90_calculator.todict()['_parameters']["projections"]:
         # for now we support only the following conversion:
-        # proj={'fsite': [0.0, 0.0, 0.0], 'ang_mtm': 'sp3'} ==> converted_proj="f=0.0,0.0,0.0:sp3"
-        position = str(proj["fsite"]).replace("[","").replace("]","").replace(" ","")
+        # proj={‘fsite’: [0.0, 0.0, 0.0], ‘ang_mtm’: ‘sp3’} ==> converted_proj="f=0.0,0.0,0.0:sp3"
+        if "fsite" in proj.keys():
+            position = "f="+str(proj["fsite"]).replace("[","").replace("]","").replace(" ","")
+        elif "site" in proj.keys():
+            position = str(proj["site"])
         orbital = proj["ang_mtm"]
-        converted_proj = "f="+position+":"+orbital
+        converted_proj = position+":"+orbital
         converted_projs.append(converted_proj)
 
     builder.wannier90.wannier90.projections = orm.List(list=converted_projs)
@@ -582,6 +592,106 @@ def get_wannier90bandsworkchain_builder_from_ase(w90_calculator):
 
     return builder
 
+def calculator_params_to_path(calculator_params) -> Path:
+
+    try:
+        calculation_name = calculator_params['calculation']
+    except KeyError:
+        calculation_name = ""
+
+    try:
+        calculation_directory = calculator_params['directory']
+    except KeyError:
+        calculation_directory = ""
+
+    # try:
+    #     calculation_prefix = calculator_params['prefix']
+    # except KeyError:
+    #     calculation_prefix = ""
+    
+    # try:
+    #     calculation_seedname = calculator_params['seedname']
+    # except AttributeError:
+    #     calculation_seedname = None
+
+    output_path = Path.cwd() / calculation_directory
+
+    if calculation_directory != calculation_name:
+        output_path = output_path / calculation_name
+
+    # if calculation_prefix:
+    #     output_path = output_path / calculation_prefix
+
+    print("output_path", output_path)
+    # print("calculator_params", calculator_params)
+    # breakpoint()
+    
+    return output_path
+
+def dump_from_aiida_wc(
+    aiida_node: WorkflowNode, retrieve_temporary: bool = False
+):
+
+    # process_dumper = ProcessDumper(overwrite=True, flat=True)
+    process_dumper = ProcessDumper(overwrite=True, flat=True)
+
+    calculator_params = aiida_node.extras['calculator_params']
+    output_path = calculator_params_to_path(calculator_params=calculator_params)
+
+    try:
+        process_dumper.dump(process_node=aiida_node, output_path=output_path)
+    # No custom exception for missing safeguard file in dumping. Should add there.
+    except:
+        pass
+
+    # print('output_path', output_path)
+
+    # print("FIND ME")
+    # print(aiida_node.extras['calculator_params'])
+    # print(aiida_node.pk)
+
+    if retrieve_temporary:
+        pass
+
+        # if isinstance(aiida_node, CalculationNode):
+        #     # print('CalculationNode', aiida_node)
+        #     # pass
+        #     remote_workdir = aiida_node.get_remote_workdir()
+        #     py_rsync(source=aiida_node.get_remote_workdir(), target=output_path / 'tmp_files')
+
+        # elif isinstance(aiida_node, WorkflowNode):
+        #     print('WorkflowNode', aiida_node)
+        #     pass
+        # else:
+        #     raise NotImplementedError
+        
+        # called_descendants = aiida_node.called_descendants
+        # called_calcjobs = [
+        #     called_descendant
+        #     for called_descendant in called_descendants
+        #     if isinstance(called_descendant, CalculationNode)
+        # ]
+
+        # for called_calcjob in called_calcjobs:
+        #     print('called_calcjob', called_calcjob)
+        #     print('caller')
+
+def py_rsync(source, target):
+
+    # todo: Add command to retrieve from remote via ssh
+    print('py_rsync')
+    # Seems like some Python packages for this exist
+
+    rsync_command = [
+            "rsync",
+            "-avz",  # archive mode, verbose, compress
+            f'{source}/',
+            target
+        ]
+
+    # Run the rsync command
+    subprocess.run(rsync_command, capture_output=True, text=True)
+
 # Decorators.
 
 ## Here we have the mapping for the calculators initialization. used in the `aiida_calculate_trigger`.
@@ -595,7 +705,7 @@ mapping_calculators = {
 
 ## Calculate step
 def aiida_pre_calculate_trigger(_pre_calculate):
-    # This wraps the _pre_calculate method. 
+    # This wraps the _pre_calculate method.
     @functools.wraps(_pre_calculate)
     def wrapper_aiida_trigger(self):
         if self.parameters.mode == "ase":
@@ -603,6 +713,7 @@ def aiida_pre_calculate_trigger(_pre_calculate):
         else:
             pass
     return wrapper_aiida_trigger
+
 
 def aiida_calculate_trigger(_calculate):
     # This wraps the _calculate method. submits AiiDA if we are not in the "ase" mode, otherwise it behaves like in the standard Koopmans run.
@@ -614,23 +725,44 @@ def aiida_calculate_trigger(_calculate):
             builder = mapping_calculators[self.ext_out](self)
             from aiida.engine import run_get_node, submit
             #running = run_get_node(builder)
-            running = submit(builder)
-            self.wchain = running # running[-1] if run_and_get_node
+            running = run_get_node(builder)
+            # Otherwise self.prefix and self.outdir
+            self.wchain = running.node # if run_and_get_node
     return wrapper_aiida_trigger
 
+def convert_paths(obj):
+    if isinstance(obj, dict):
+        return {k: convert_paths(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_paths(v) for v in obj]
+    elif isinstance(obj, pathlib.Path):
+        return obj.name
+    else:
+        return obj
+
 def aiida_post_calculate_trigger(_post_calculate):
-    # This wraps the _post_calculate method. 
+    # This wraps the _post_calculate method.
     @functools.wraps(_post_calculate)
     def wrapper_aiida_trigger(self):
         if self.parameters.mode == "ase":
             return _post_calculate(self,)
         else:
-            pass
+            # JG: self is the Calculator
+            parameters_copy = self.parameters.todict(full_dict=True)
+            cleaned_parameters = convert_paths(parameters_copy)
+
+            try:
+                self.wchain.base.extras.set('calculator_params', cleaned_parameters)
+            except:
+                raise
+
+            dump_from_aiida_wc(aiida_node=self.wchain, retrieve_temporary=True)
+
     return wrapper_aiida_trigger
 
 # Read results.
 def aiida_read_results_trigger(read_results):
-    # This wraps the read_results method. 
+    # This wraps the read_results method.
     @functools.wraps(read_results)
     def wrapper_aiida_trigger(self):
         if self.parameters.mode == "ase":
@@ -648,12 +780,12 @@ def aiida_read_results_trigger(read_results):
             if self.ext_out in [".pwo",".wout",".kso",".kho"]:
                 self.calc = output.calc
                 self.results = output.calc.results
-            
+
     return wrapper_aiida_trigger
 
 # Link calculations and results.
 def aiida_link_trigger(link):
-    # This wraps the link method of Workflow class. 
+    # This wraps the link method of Workflow class.
     @functools.wraps(link)
     def wrapper_aiida_trigger(self,src_calc, src_path, dest_calc, dest_path):
         if self.parameters.mode == "ase":
@@ -669,15 +801,15 @@ def aiida_get_content_trigger(get_content):
     def wrapper_aiida_trigger(calc, relpath):
         if calc.parameters.mode == "ase":
             return get_content(calc, relpath)
-        elif hasattr(calc,"wchain"): 
+        elif hasattr(calc,"wchain"):
             if calc.ext_out == ".wout":
                 inner_remote_folder=calc.wchain.outputs.wannier90.retrieved
             else:
                 inner_remote_folder=None
             filename = "aiida"+calc.ext_out
             return get_output_content(
-                calc, filename, 
-                mode="r", 
+                calc, filename,
+                mode="r",
                 inner_remote_folder=inner_remote_folder)
     return wrapper_aiida_trigger
 
@@ -688,7 +820,7 @@ def aiida_write_content_trigger(write_content):
     def wrapper_aiida_trigger(dst_file, merged_filecontents):
         if calc.parameters.mode == "ase":
             return get_content(dst_file, merged_filecontents)
-        elif hasattr(calc,"wchain"): 
+        elif hasattr(calc,"wchain"):
             return generate_singlefiledata(dst_file, merged_filecontents)
     return wrapper_aiida_trigger
 
@@ -699,7 +831,7 @@ def aiida_dfpt_run_calculator(run_calculator):
     def wrapper_aiida_trigger(self, calc):
         if calc.parameters.mode == "ase":
             return run_calculator(calc)
-        elif hasattr(calc,"wchain"): 
+        elif hasattr(calc,"wchain"):
             return self.run_calculators([calc])
     return wrapper_aiida_trigger
 

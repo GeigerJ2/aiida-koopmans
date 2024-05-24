@@ -1,6 +1,8 @@
 import pathlib
 import tempfile
+
 from aiida.plugins import DataFactory
+
 SingleFileData = DataFactory('core.singlefile')
 
 def generate_singlefiledata(filename, flines):
@@ -11,6 +13,7 @@ def generate_singlefiledata(filename, flines):
             fd.write(''.join(flines))
         
         file = SingleFileData(temp_file)
+        file.store()
 
         return file
 
