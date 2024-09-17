@@ -52,9 +52,6 @@ def generate_alpha_singlefiledata(calc):
     [alphas] = calc.alphas
     filling = [True for _ in range(len(alphas))]
     
-    a_filled = [a for a, f in zip(alphas, filling) if f]
-    a_empty = [a for a, f in zip(alphas, filling) if not f]
-    
     with tempfile.TemporaryDirectory() as dirpath:
         # Open the output file from the AiiDA storage and copy content to the temporary file
         a_filled = [a for a, f in zip(alphas, filling) if f]
@@ -66,5 +63,5 @@ def generate_alpha_singlefiledata(calc):
                 for i, a in enumerate(alphas):
                     fd.write('{} {} 1.0\n'.format(i + 1, a))
                     
-                calc.alphas_files["alpha"+suffix] = SingleFileData(temp_file)
+            calc.alphas_files["alpha"+suffix] = SingleFileData(temp_file)
                 

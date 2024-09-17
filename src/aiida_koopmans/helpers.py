@@ -659,9 +659,9 @@ def aiida_fetch_linked_files_trigger(_fetch_linked_files):
     @functools.wraps(_fetch_linked_files)
     def wrapper_aiida_trigger(self):
         if self.parameters.mode == "ase":
-            return _fetch_linked_files(self,)
+            return _fetch_linked_files(self)
         else: # if pseudo linking, src_calc = None
-            for dest_filename, (src_calc, src_filename) in self._linked_files.items():
+            for dest_filename, (src_calc, src_filename, symlink, recursive_symlink, overwrite) in self.linked_files.items():
                 # check the we have only one src_calc!!!
                 if hasattr(src_calc,"wchain"): 
                     self.parent_folder = src_calc.wchain.outputs.remote_folder
@@ -724,7 +724,7 @@ def aiida_write_alphas_trigger(write_alphas):
     @functools.wraps(write_alphas)
     def wrapper_aiida_trigger(self):
         if self.parameters.mode == "ase":
-            return write_alphas()
+            return write_alphas(self)
         else:
             return generate_alpha_singlefiledata(self,)
     return wrapper_aiida_trigger
