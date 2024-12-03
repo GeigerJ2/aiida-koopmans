@@ -23,7 +23,7 @@ from ase import io
 from ase.io.espresso import kch_keys, kcp_keys, kcs_keys, pw_keys, w2kcw_keys
 
 from aiida_koopmans.calculations.kcw import KcwCalculation
-from aiida_koopmans.data.utils import generate_singlefiledata, generate_alpha_singlefiledata
+from aiida_koopmans.data.utils import generate_singlefiledata, generate_alpha_singlefiledata, produce_wannier90_files
 
 """
 ASE calculator MUST have `wchain` attribute (the related AiiDA WorkChain) to be able to use these functions!
@@ -272,15 +272,16 @@ def from_wann2kc_to_KcwCalculation(wann2kc_calculator):
         builder.metadata = wann2kc_calculator.parameters.mode["metadata_kcw"]
     builder.parent_folder = wann2kc_calculator.parent_folder
 
-    if hasattr(wann2kc_calculator, "w90_files"):
-        builder.wann_emp_u_mat = wann2kc_calculator.w90_files["emp"]["u_mat"]
-        builder.wann_emp_u_dis_mat = wann2kc_calculator.w90_files["emp"][
+    if hasattr(wann2kc_calculator, "wannier90_files"):
+        builder.wann_emp_u_mat = wann2kc_calculator.wannier90_files["emp"]["u_mat"]
+        builder.wann_u_mat = wann2kc_calculator.wannier90_files["occ"]["u_mat"]
+        builder.wann_emp_u_dis_mat = wann2kc_calculator.wannier90_files["emp"][
             "u_dis_mat"
         ]
-        builder.wann_centres_xyz = wann2kc_calculator.w90_files["occ"][
+        builder.wann_centres_xyz = wann2kc_calculator.wannier90_files["occ"][
             "centres_xyz"
         ]
-        builder.wann_emp_centres_xyz = wann2kc_calculator.w90_files["emp"][
+        builder.wann_emp_centres_xyz = wann2kc_calculator.wannier90_files["emp"][
             "centres_xyz"
         ]
 
@@ -354,14 +355,14 @@ def from_kcwham_to_KcwCalculation(kcw_calculator):
         builder.metadata = kcw_calculator.parameters.mode["metadata_kcw"]
     builder.parent_folder = kcw_calculator.parent_folder
 
-    if hasattr(kcw_calculator, "w90_files") and control_dict.get(
+    if hasattr(kcw_calculator, "wannier90_files") and control_dict.get(
         "read_unitary_matrix", False
     ):
-        builder.wann_u_mat = kcw_calculator.w90_files["occ"]["u_mat"]
-        builder.wann_emp_u_mat = kcw_calculator.w90_files["emp"]["u_mat"]
-        builder.wann_emp_u_dis_mat = kcw_calculator.w90_files["emp"]["u_dis_mat"]
-        builder.wann_centres_xyz = kcw_calculator.w90_files["occ"]["centres_xyz"]
-        builder.wann_emp_centres_xyz = kcw_calculator.w90_files["emp"][
+        builder.wann_u_mat = kcw_calculator.wannier90_files["occ"]["u_mat"]
+        builder.wann_emp_u_mat = kcw_calculator.wannier90_files["emp"]["u_mat"]
+        builder.wann_emp_u_dis_mat = kcw_calculator.wannier90_files["emp"]["u_dis_mat"]
+        builder.wann_centres_xyz = kcw_calculator.wannier90_files["occ"]["centres_xyz"]
+        builder.wann_emp_centres_xyz = kcw_calculator.wannier90_files["emp"][
             "centres_xyz"
         ]
         
@@ -438,14 +439,14 @@ def from_kcwscreen_to_KcwCalculation(kcw_calculator):
         builder.metadata = kcw_calculator.parameters.mode["metadata_kcw"]
     builder.parent_folder = kcw_calculator.parent_folder
 
-    if hasattr(kcw_calculator, "w90_files") and control_dict.get(
+    if hasattr(kcw_calculator, "wannier90_files") and control_dict.get(
         "read_unitary_matrix", False
     ):
-        builder.wann_u_mat = kcw_calculator.w90_files["occ"]["u_mat"]
-        builder.wann_emp_u_mat = kcw_calculator.w90_files["emp"]["u_mat"]
-        builder.wann_emp_u_dis_mat = kcw_calculator.w90_files["emp"]["u_dis_mat"]
-        builder.wann_centres_xyz = kcw_calculator.w90_files["occ"]["centres_xyz"]
-        builder.wann_emp_centres_xyz = kcw_calculator.w90_files["emp"][
+        builder.wann_u_mat = kcw_calculator.wannier90_files["occ"]["u_mat"]
+        builder.wann_emp_u_mat = kcw_calculator.wannier90_files["emp"]["u_mat"]
+        builder.wann_emp_u_dis_mat = kcw_calculator.wannier90_files["emp"]["u_dis_mat"]
+        builder.wann_centres_xyz = kcw_calculator.wannier90_files["occ"]["centres_xyz"]
+        builder.wann_emp_centres_xyz = kcw_calculator.wannier90_files["emp"][
             "centres_xyz"
         ]
     
@@ -661,12 +662,21 @@ def aiida_fetch_linked_files_trigger(_fetch_linked_files):
         if self.parameters.mode == "ase":
             return _fetch_linked_files(self)
         else: # if pseudo linking, src_calc = None
+            self.wannier90_files = {}
             for dest_filename, (src_calc, src_filename, symlink, recursive_symlink, overwrite) in self.linked_files.items():
                 # check the we have only one src_calc!!!
                 if hasattr(src_calc,"wchain"): 
-                    self.parent_folder = src_calc.wchain.outputs.remote_folder
-                elif hasattr(src_calc,"dst_file"):
-                    pass #linik w90_files.
+                    # semi-complex logic to have the w90 files for the wann2kc:
+                    if "wannier90" in dest_filename:
+                        if "emp" in dest_filename:
+                            self.wannier90_files["emp"] = produce_wannier90_files(src_calc,"emp")
+                        else:
+                            self.wannier90_files["occ"] = produce_wannier90_files(src_calc,"occ")    
+                    else:    
+                        self.parent_folder = src_calc.wchain.outputs.remote_folder
+                elif hasattr(src_calc,"wannier90_files"):
+                    pass #link wannier90_files in case we merged multiple Wannierization.
+            if self.wannier90_files == {}: delattr(self, "wannier90_files")
     return wrapper_aiida_trigger
 
 # get files to manipulate further.
@@ -730,22 +740,38 @@ def aiida_write_alphas_trigger(write_alphas):
     return wrapper_aiida_trigger
 
 def aiida_merge_wannier_files_trigger(merge_wannier_files):
-    # needed to populate the self.w90_files dictionary in the wannierize workflow.
+    # needed to populate the self.wannier90_files dictionary in the wannierize workflow.
     @functools.wraps(merge_wannier_files)
     def wrapper_aiida_trigger(self, block, merge_directory, prefix):
         merge_wannier_files(self,block, merge_directory, prefix)
         if self.parameters.mode == "ase":
             return
         else:
-            self.w90_files[merge_directory] = {
+            self.wannier90_files[merge_directory] = {
                 'hr_dat': self.merge_hr_proc.singlefiledata,
                 }
             del self.merge_hr_proc.singlefiledata
             if self.parameters.method == 'dfpt':
-                self.w90_files[merge_directory].update({
+                self.wannier90_files[merge_directory].update({
                     "u_mat": self.merge_u_proc.singlefiledata, 
                     "centres_xyz": self.merge_centers_proc.singlefiledata,
                     })
                 del self.merge_u_proc.singlefiledata
                 del self.merge_centers_proc.singlefiledata
+    return wrapper_aiida_trigger
+
+def aiida_trigger_run_calculator(run_calculator):
+    # This wraps the run_calculator method. 
+    @functools.wraps(run_calculator)
+    def wrapper_aiida_trigger(self, calc):
+        if calc.prefix in ["wannier90_preproc","pw2wannier90"]:
+            return
+        elif calc.prefix in ["wannier90"]:
+            from koopmans import calculators
+            calc_nscf = [c for c in self.calculations if isinstance(
+            c, calculators.PWCalculator) and c.parameters.calculation == 'nscf'][-1]
+            self.link(calc_nscf, calc_nscf.parameters.outdir, calc, "")
+            return run_calculator(self,calc)
+        else:
+            return run_calculator(self,calc)
     return wrapper_aiida_trigger

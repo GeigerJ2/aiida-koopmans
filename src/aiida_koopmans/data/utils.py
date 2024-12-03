@@ -14,7 +14,7 @@ def generate_singlefiledata(filename, flines):
 
         return file
 
-def produce_wannier90_files(calc_w90,merge_directory_name,method="dfpt"):
+def produce_wannier90_files(calc_w90,label,method="dfpt"):
     """producing the wannier90 files in the case of just one occ and/or one emp blocks.
 
     Args:
@@ -34,7 +34,7 @@ def produce_wannier90_files(calc_w90,merge_directory_name,method="dfpt"):
     
     standard_dictionary =  {'hr_dat':hr_singlefile, "u_mat": u_singlefile, "centres_xyz": centres_singlefile}
     
-    if method == 'dfpt' and merge_directory_name == "emp":
+    if method == 'dfpt' and label == "emp":
         u_dis_file = calc_w90.wchain.outputs.wannier90.retrieved.get_object_content('aiida' + '_u_dis.mat')
         u_dis_singlefile = generate_singlefiledata('aiida' + '_u_dis.mat', u_dis_file)
         standard_dictionary["u_dis_mat"] = u_dis_singlefile
