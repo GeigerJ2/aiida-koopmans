@@ -19,8 +19,8 @@ from aiida.common.exceptions import NotExistent
 from aiida.orm import Code, Computer
 from aiida_quantumespresso.calculations.pw import PwCalculation
 from aiida_wannier90.calculations.wannier90 import Wannier90Calculation
-from ase import io
-from ase.io.espresso import kch_keys, kcp_keys, kcs_keys, pw_keys, w2kcw_keys
+from ase_koopmans import io
+from ase_koopmans.io.espresso import kch_keys, kcp_keys, kcs_keys, pw_keys, w2kcw_keys
 
 from aiida_koopmans.calculations.kcw import KcwCalculation
 from aiida_koopmans.data.utils import generate_singlefiledata, generate_alpha_singlefiledata, produce_wannier90_files
