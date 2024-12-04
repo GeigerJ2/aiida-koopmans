@@ -53,9 +53,12 @@ class AiiDAEngine(Engine):
             return
         
         self.step_data['steps'][step.uid] = {} # maybe not needed
-        builder = get_builder_from_ase(calculator=step, step_data=self.step_data) # ASE to AiiDA conversion. put some error message if the conversion fails
+        builder, self.step_data = get_builder_from_ase(calculator=step, step_data=self.step_data) # ASE to AiiDA conversion. put some error message if the conversion fails
         running = submit(builder)
+        print(f"Running workchain {running.pk} for step {step.uid}")
         # running = aiidawrapperwchain.submit(builder) # in the non-blocking case.
+        
+        # The below will be passed to the context, so we will need to store also the instance of the submitted workchain, if in KoopmansWorkChain.
         self.step_data['steps'][step.uid] = {'workchain': running.pk, } #'remote_folder': running.outputs.remote_folder}
         
         self.set_status(step, Status.RUNNING)
@@ -154,8 +157,8 @@ class AiiDAEngine(Engine):
         pseudo_data = None
         for pseudo in qb.all():
             with tempfile.TemporaryDirectory() as dirpath:
-                temp_file = pathlib.Path(dirpath) / (pseudo[0].attributes['element'] + '.upf')
-                with pseudo[0].open(pseudo[0].attributes['element'] + '.upf', 'rb') as handle:
+                temp_file = pathlib.Path(dirpath) / (pseudo[0].base.attributes.all['element'] + '.upf')
+                with pseudo[0].open(pseudo[0].base.attributes.all['element'] + '.upf', 'rb') as handle:
                     temp_file.write_bytes(handle.read())
                 pseudo_data = read_pseudo_file(temp_file)
         
