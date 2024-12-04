@@ -10,8 +10,11 @@ from aiida.common.exceptions import NotExistent
 from aiida.orm import Code, Computer
 from aiida_quantumespresso.calculations.pw import PwCalculation
 from aiida_wannier90.calculations.wannier90 import Wannier90Calculation
-from ase import io
-from ase.io.espresso import kch_keys, kcp_keys, kcs_keys, pw_keys, w2kcw_keys
+
+from ase import Atoms
+from ase_koopmans import Atoms as AtomsKoopmans
+from ase_koopmans import io
+from ase_koopmans.io.espresso import kch_keys, kcp_keys, kcs_keys, pw_keys, w2kcw_keys
 
 from aiida_koopmans.calculations.kcw import KcwCalculation
 from aiida_koopmans.data.utils import generate_singlefiledata, generate_alpha_singlefiledata, produce_wannier90_files
@@ -54,7 +57,12 @@ def get_PwBaseWorkChain_from_ase(pw_calculator, step_data=None):
     """
     aiida_inputs = step_data['configuration']
     calc_params = pw_calculator._parameters
-    structure = orm.StructureData(ase=pw_calculator.atoms) # TODO: only one sdata, stored in the step_data dict. but some cases have output structure diff from input. 
+    
+    if isinstance(pw_calculator.atoms, AtomsKoopmans):
+        ase_atoms = Atoms.fromdict(pw_calculator.atoms.todict())
+        
+    # WE NEED TO USE THE INPUT STRUCTURE OF SCF, WHEN WE DO NSCF
+    structure = orm.StructureData(ase=ase_atoms) # TODO: only one sdata, stored in the step_data dict. but some cases have output structure diff from input. 
 
     pw_overrides = {
         "CONTROL": {},
@@ -93,7 +101,7 @@ def get_PwBaseWorkChain_from_ase(pw_calculator, step_data=None):
         # here we need explicit kpoints
         builder.kpoints.set_kpoints(calc_params["kpts"].kpts,cartesian=False) # TODO: check cartesian false is correct.
 
-    parent_calculators = [f[0].directory for f in pw_calculator.linked_files.values() if f[0] is not None]
+    parent_calculators = [f[0].uid for f in pw_calculator.linked_files.values() if f[0] is not None]
     if len(set(parent_calculators)) > 1:
         raise ValueError("More than one parent calculator found.")
     elif len(set(parent_calculators)) == 1:

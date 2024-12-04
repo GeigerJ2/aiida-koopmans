@@ -2,7 +2,7 @@
 from pathlib import Path
 import pathlib
 import tempfile
-from ase import io
+from ase_koopmans import io
 
 from aiida.orm import Dict
 
