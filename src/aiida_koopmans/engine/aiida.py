@@ -151,12 +151,17 @@ class AiiDAEngine(Engine):
         qb.append(orm.Group, filters={'label': {'==': library}}, tag='pseudo_group')
         qb.append(UpfData, filters={'attributes.element': {'==': element}}, with_group='pseudo_group')
         
-        print(qb.all())
+        pseudo_data = None
         for pseudo in qb.all():
             with tempfile.TemporaryDirectory() as dirpath:
                 temp_file = pathlib.Path(dirpath) / (pseudo[0].attributes['element'] + '.upf')
                 with pseudo[0].open(pseudo[0].attributes['element'] + '.upf', 'rb') as handle:
                     temp_file.write_bytes(handle.read())
                 pseudo_data = read_pseudo_file(temp_file)
+        
+        if not pseudo_data:
+            raise ValueError(f"Could not find pseudopotential for element {element} in library {library}")
+        
+        self.step_data['pseudo_family'] = library
         
         return pseudo_data
