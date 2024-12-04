@@ -153,11 +153,11 @@ def get_Wannier90BandsWorkChain_builder_from_ase(w90_calculator, step_data=None)
             codes=codes,
             structure=nscf.inputs.pw.structure,
             pseudo_family="PseudoDojo/0.4/LDA/SR/standard/upf",
-            protocol="fast",
+            protocol="moderate",
             projection_type=WannierProjectionType.ANALYTIC,
             print_summary=False,
         )
-
+    
     # Use nscf explicit kpoints
     kpoints = orm.KpointsData()
     kpoints.set_cell_from_structure(builder.structure)
@@ -167,7 +167,6 @@ def get_Wannier90BandsWorkChain_builder_from_ase(w90_calculator, step_data=None)
     # set kpath using the WannierizeWFL data.
     k_coords = []
     k_labels = []
-    print(w90_calculator.kpts)
     k_path=w90_calculator.parameters.kpoint_path.kpts
     special_k = w90_calculator.parameters.kpoint_path.todict()["special_points"]
     k_linear,special_k_coords,special_k_labels = w90_calculator.parameters.kpoint_path.get_linear_kpoint_axis()
@@ -189,6 +188,9 @@ def get_Wannier90BandsWorkChain_builder_from_ase(w90_calculator, step_data=None)
     del builder.nscf
     del builder.projwfc
 
+    # pop dis_froz_max
+    params.pop('dis_froz_max',None)
+    
     for k,v in w90_calculator.parameters.items():
         if k not in ["kpoints","kpoint_path","projections"]:
             params[k] = v
