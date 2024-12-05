@@ -37,33 +37,22 @@ def get_PwBaseWorkChain_from_ase(pw_calculator, step_data=None):
 
     load_profile()
 
-    """
-    We should check automatically on the accepted keywords in PwCalculation and where are. Should be possible.
-    we suppose that the calculator has an attribute called mode e.g.
-
-    pw_calculator.parameters.mode = {
-        "pw_code": "pw-7.2-ok@localhost",
-        "metadata": {
-        "options": {
-            "max_wallclock_seconds": 3600,
-            "resources": {
-                "num_machines": 1,
-                "num_mpiprocs_per_machine": 1,
-                "num_cores_per_mpiproc": 1
-            },
-            "custom_scheduler_commands": "export OMP_NUM_THREADS=1"
-        }
-    }
-    }
-    """
     aiida_inputs = step_data['configuration']
     calc_params = pw_calculator._parameters
 
-    if isinstance(pw_calculator.atoms, AtomsKoopmans):
-        ase_atoms = Atoms.fromdict(pw_calculator.atoms.todict())
-
-    # WE NEED TO USE THE INPUT STRUCTURE OF SCF, WHEN WE DO NSCF
-    structure = orm.StructureData(ase=ase_atoms) # TODO: only one sdata, stored in the step_data dict. but some cases have output structure diff from input.
+    structure = None
+    parent_folder = None
+    for step, val in step_data['steps'].items():
+        if "scf" in str(step) and ("nscf" in pw_calculator.uid or "bands" in pw_calculator.uid):
+            scf = orm.load_node(val["workchain"])
+            structure = scf.inputs.pw.structure
+            parent_folder = scf.outputs.remote_folder
+            break
+    
+    if not structure:
+        if isinstance(pw_calculator.atoms, AtomsKoopmans):
+            ase_atoms = Atoms.fromdict(pw_calculator.atoms.todict())
+        structure = orm.StructureData(ase=ase_atoms) 
 
     pw_overrides = {
         "CONTROL": {},
@@ -82,12 +71,12 @@ def get_PwBaseWorkChain_from_ase(pw_calculator, step_data=None):
     for k in pw_keys['electrons']:
         if k in calc_params.keys() and k not in ALL_BLOCKED_KEYWORDS:
             pw_overrides["ELECTRONS"][k] = calc_params[k]
-
+    
     builder = PwBaseWorkChain.get_builder_from_protocol(
         code=aiida_inputs["pw_code"],
         structure=structure,
         overrides={
-            "pseudo_family": "PseudoDojo/0.4/LDA/SR/standard/upf", # TODO: automatic store of pseudos from koopmans folder, if not.
+            "pseudo_family": step_data["pseudo_family"], # TODO: automatic store of pseudos from koopmans folder, if not.
             "pw": {"parameters": pw_overrides},
         },
         electronic_type=ElectronicType.INSULATOR,
@@ -102,14 +91,10 @@ def get_PwBaseWorkChain_from_ase(pw_calculator, step_data=None):
         # here we need explicit kpoints
         builder.kpoints.set_kpoints(calc_params["kpts"].kpts,cartesian=False) # TODO: check cartesian false is correct.
 
-    parent_calculators = [f[0].uid for f in pw_calculator.linked_files.values() if f[0] is not None]
-    if len(set(parent_calculators)) > 1:
-        raise ValueError("More than one parent calculator found.")
-    elif len(set(parent_calculators)) == 1:
-        if "remote_folder" in step_data['steps'][parent_calculators[0]]:
-            builder.pw.parent_folder = orm.load_node(step_data['steps'][parent_calculators[0]]["remote_folder"])
-
-    return builder
+    if parent_folder:
+        builder.pw.parent_folder = parent_folder
+    
+    return builder, step_data
 
 def get_Wannier90BandsWorkChain_builder_from_ase(w90_calculator, step_data=None):
     # get the builder from WannierizeWorkflow, but after we already initialized a Wannier90Calculator.
@@ -153,12 +138,12 @@ def get_Wannier90BandsWorkChain_builder_from_ase(w90_calculator, step_data=None)
     builder = Wannier90BandsWorkChain.get_builder_from_protocol(
             codes=codes,
             structure=nscf.inputs.pw.structure,
-            pseudo_family="PseudoDojo/0.4/LDA/SR/standard/upf",
-            protocol="fast",
+            pseudo_family=step_data["pseudo_family"],
+            protocol="moderate",
             projection_type=WannierProjectionType.ANALYTIC,
             print_summary=False,
         )
-
+    
     # Use nscf explicit kpoints
     kpoints = orm.KpointsData()
     kpoints.set_cell_from_structure(builder.structure)
@@ -168,7 +153,6 @@ def get_Wannier90BandsWorkChain_builder_from_ase(w90_calculator, step_data=None)
     # set kpath using the WannierizeWFL data.
     k_coords = []
     k_labels = []
-    print(w90_calculator.kpts)
     k_path=w90_calculator.parameters.kpoint_path.kpts
     special_k = w90_calculator.parameters.kpoint_path.todict()["special_points"]
     k_linear,special_k_coords,special_k_labels = w90_calculator.parameters.kpoint_path.get_linear_kpoint_axis()
@@ -190,6 +174,9 @@ def get_Wannier90BandsWorkChain_builder_from_ase(w90_calculator, step_data=None)
     del builder.nscf
     del builder.projwfc
 
+    # pop dis_froz_max
+    params.pop('dis_froz_max',None)
+    
     for k,v in w90_calculator.parameters.items():
         if k not in ["kpoints","kpoint_path","projections"]:
             params[k] = v
@@ -250,8 +237,7 @@ def get_Wannier90BandsWorkChain_builder_from_ase(w90_calculator, step_data=None)
     if nscf.inputs.pw.parameters.get_dict()["SYSTEM"]["nspin"]>1: params_pw2wannier90['inputpp']["spin_component"] = "up"
     builder.pw2wannier90.pw2wannier90.parameters = orm.Dict(dict=params_pw2wannier90)
 
-
-    return builder
+    return builder, step_data
 
 
 def get_projwfc_builder_from_ase(projwfc_calculator, step_data=None):
